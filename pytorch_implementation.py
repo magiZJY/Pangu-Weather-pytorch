@@ -20,19 +20,20 @@ from torch.nn import GELU, Dropout, LayerNorm, Softmax
 from timm.models.layers import DropPath
 
 # Common functions for roll, pad, and crop, depends on the data structure of your software environment
-from tool_functions import roll3D, pad3D, pad2D, Crop3D, Crop2D
+from functional import roll3D, pad3D, pad2D, Crop3D, Crop2D
 
 # Common functions for reshaping and changing the order of dimensions
 # reshape: change the shape of the data with the order unchanged, see Pytorch API or Tensorflow API
 # TransposeDimensions: change the order of the dimensions, see Pytorch API or Tensorflow API
-from torch import reshape, transpose as TransposeDimensions
+from torch import reshape
+from functional import TransposeDimensions
 
 # Common functions for creating new tensors
 # ConstructTensor: create a new tensor with an arbitrary shape
 # TruncatedNormalInit: Initialize the tensor with Truncate Normalization distribution
 # RangeTensor: create a new tensor like range(a, b)
 from torch import tensor as ConstructTensor, arange as RangeTensor
-from tool_functions import TruncatedNormalInit
+from functional import TruncatedNormalInit
 
 # Common operations for the data, you may design it or simply use deep learning APIs default operations
 # LinearSpace: a tensor version of numpy.linspace
@@ -55,13 +56,17 @@ from torch import concatenate as Concatenate
 # Backward: Gradient backward to calculate the gratitude of each parameters
 # UpdateModelParametersWithAdam: Use Adam to update parameters, e.g., torch.optim.Adam
 from torch import load as LoadModel, save as SaveModel
-from tool_functions import Backward, UpdateModelParametersWithAdam
+from functional import Backward, UpdateModelParametersWithAdam
 
 # Custom functions to read your data from the disc
 # LoadData: Load the ERA5 data
 # LoadConstantMask: Load constant masks, e.g., soil type
 # LoadStatic: Load mean and std of the ERA5 training data, every fields such as T850 is treated as an image and calculate the mean and std
 from Your_Data_Code import LoadData, LoadConstantMask, LoadStatic
+
+from functional import MLP
+from torch.nn import Parameter
+from perlin_numpy import generate_fractal_noise_3d as GenerateFractalNoise
 
 
 def Inference(input, input_surface, forecast_range):
@@ -201,17 +206,18 @@ class PanguModel:
     self._input_layer = PatchEmbedding((2, 4, 4), 192)
 
     # Four basic layers
-    self.layer1 = EarthSpecificLayer(2, 192, drop_list[:2], 6)
-    self.layer2 = EarthSpecificLayer(6, 384, drop_list[6:], 12)
-    self.layer3 = EarthSpecificLayer(6, 384, drop_list[6:], 12)
-    self.layer4 = EarthSpecificLayer(2, 192, drop_list[:2], 6)
+    self.layer1 = EarthSpecificLayer(2, 192, drop_path_list[:2], 6)
+    self.layer2 = EarthSpecificLayer(6, 384, drop_path_list[6:], 12)
+    self.layer3 = EarthSpecificLayer(6, 384, drop_path_list[6:], 12)
+    self.layer4 = EarthSpecificLayer(2, 192, drop_path_list[:2], 6)
 
     # Upsample and downsample
     self.upsample = UpSample(384, 192)
     self.downsample = DownSample(192)
 
+    # [?] Do not know whether patch size is (2,4,4) when recovering the output
     # Patch Recovery
-    self._output_layer = PatchRecovery(384)
+    self._output_layer = PatchRecovery((2,4,4), 384)
     
   def forward(self, input, input_surface):
     '''Backbone architecture'''
@@ -281,7 +287,7 @@ class PatchEmbedding:
     return x
     
 class PatchRecovery:
-  def __init__(self, dim):
+  def __init__(self, patch_size, dim):
     '''Patch recovery operation'''
     # Hear we use two transposed convolutions to recover data
     self.conv = ConvTranspose3d(input_dims=dim, output_dims=5, kernel_size=patch_size, stride=patch_size)
@@ -306,7 +312,7 @@ class DownSample:
   def __init__(self, dim):
     '''Down-sampling operation'''
     # A linear function and a layer normalization
-    self.linear = Linear(4*dim, 2*dim, bias=Fasle)
+    self.linear = Linear(4*dim, 2*dim, bias=False)
     self.norm = LayerNorm(4*dim)
   
   def forward(self, x, Z, H, W):
@@ -314,7 +320,7 @@ class DownSample:
     x = reshape(x, target_shape=(x.shape[0], Z, H, W, x.shape[-1]))
 
     # Padding the input to facilitate downsampling
-    x = Pad3D(x)
+    x = pad3D(x)
 
     # Reorganize x to reduce the resolution: simply change the order and downsample from (8, 360, 182) to (8, 180, 91)
     Z, H, W = x.shape
@@ -409,8 +415,9 @@ class EarthSpecificBlock:
     # Save the shortcut for skip-connection
     shortcut = x
 
+    # [?]
     # Reshape input to three dimensions to calculate window attention
-    reshape(x, target_shape=(x.shape[0], Z, H, W, x.shape[2]))
+    reshape(x, shape=(x.shape[0], Z, H, W, x.shape[2]))
 
     # Zero-pad input if needed
     x = pad3D(x)
@@ -419,8 +426,9 @@ class EarthSpecificBlock:
     ori_shape = x.shape
 
     if roll:
+      # [?] Not sure whether the 3 dimensions are [1, 2, 3]
       # Roll x for half of the window for 3 dimensions
-      x = roll3D(x, shift=[self.window_size[0]//2, self.window_size[1]//2, self.window_size[2]//2])
+      x = roll3D(x, shift=[self.window_size[0]//2, self.window_size[1]//2, self.window_size[2]//2], dims=[1, 2, 3])
       # Generate mask of attention masks
       # If two pixels are not adjacent, then mask the attention between them
       # Your can set the matrix element to -1000 when it is not adjacent, then add it to the attention
@@ -430,17 +438,17 @@ class EarthSpecificBlock:
       mask = no_mask
 
     # Reorganize data to calculate window attention
-    x_window = reshape(x, target_shape=(x.shape[0], Z//window_size[0], window_size[0], H // window_size[1], window_size[1], W // window_size[2], window_size[2], x.shape[-1]))
+    x_window = reshape(x, target_shape=(x.shape[0], Z // self.window_size[0], self.window_size[0], H // self.window_size[1], self.window_size[1], W // self.window_size[2], self.window_size[2], x.shape[-1]))
     x_window = TransposeDimensions(x_window, (0, 1, 3, 5, 2, 4, 6, 7))
 
     # Get data stacked in 3D cubes, which will further be used to calculated attention among each cube
-    x_window = reshape(x_window, target_shape=(-1, window_size[0]* window_size[1]*window_size[2], x.shape[-1]))
+    x_window = reshape(x_window, target_shape=(-1, self.window_size[0] * self.window_size[1] * self.window_size[2], x.shape[-1]))
 
     # Apply 3D window attention with Earth-Specific bias
     x_window = self.attention(x, mask)
 
     # Reorganize data to original shapes
-    x = reshape(x_window, target_shape=((-1, Z // window_size[0], H // window_size[1], W // window_size[2], window_size[0], window_size[1], window_size[2], x_window.shape[-1])))
+    x = reshape(x_window, target_shape=((-1, Z // self.window_size[0], H // self.window_size[1], W // self.window_size[2], self.window_size[0], self.window_size[1], self.window_size[2], x_window.shape[-1])))
     x = TransposeDimensions(x, (0, 1, 4, 2, 5, 3, 6, 7))
 
     # Reshape the tensor back to its original shape
@@ -454,7 +462,7 @@ class EarthSpecificBlock:
     x = Crop3D(x)
 
     # Reshape the tensor back to the input shape
-    x = reshape(x, target_shape=(x.shape[0], x.shape[1]*x.shape[2]*x.shape[3], x.shape[4]))
+    x = reshape(x, target_shape=(x.shape[0], x.shape[1] * x.shape[2] * x.shape[3], x.shape[4]))
 
     # Main calculation stages
     x = shortcut + self.drop_path(self.norm1(x))
@@ -482,13 +490,13 @@ class EarthAttention3D:
     # input_shape is current shape of the self.forward function
     # You can run your code to record it, modify the code and rerun it
     # Record the number of different window types
-    self.type_of_windows = (input_shape[0]//window_size[0])*(input_shape[1]//window_size[1])
+    self.type_of_windows = (self.input_shape[0]//window_size[0])*(self.input_shape[1]//window_size[1])
 
     # For each type of window, we will construct a set of parameters according to the paper
     self.earth_specific_bias = ConstructTensor(shape=((2 * window_size[2] - 1) * window_size[1] * window_size[1] * window_size[0] * window_size[0], self.type_of_windows, heads))
 
     # Making these tensors to be learnable parameters
-    self.earth_specific_bias = Parameters(self.earth_specific_bias)
+    self.earth_specific_bias = Parameter(self.earth_specific_bias)
 
     # Initialize the tensors using Truncated normal distribution
     TruncatedNormalInit(self.earth_specific_bias, std=0.02) 
@@ -604,5 +612,5 @@ def PerlinNoise():
   # Scaling factor between two octaves
   persistence = 0.5
   # see https://github.com/pvigier/perlin-numpy/ for the implementation of GenerateFractalNoise (e.g., from perlin_numpy import generate_fractal_noise_3d)
-  perlin_noise = noise_scale*GenerateFractalNoise((H, W), (period_number, period_number), octaves, persistence)
+  perlin_noise = noise_scale * GenerateFractalNoise((H, W), (period_number, period_number), octaves, persistence)
   return perlin_noise

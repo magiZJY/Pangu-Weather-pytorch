@@ -38,3 +38,27 @@ def Backward(tensor: Tensor):
 
 def UpdateModelParametersWithAdam(AdamOptimizer: torch.optim.Adam):
     AdamOptimizer.step()
+
+def TransposeDimensions(tensor: Tensor, *dims: int):
+    return tensor.permute(*dims)
+
+class MLP(torch.nn.Module):
+    def __init__(self, in_features: int, drop: float=0.):
+        """
+        A simple multi-layer perceptron. {in_features} = {out_features} = {hidden_features}.
+        """
+        super().__init__()
+        out_features = in_features
+        hidden_features = in_features
+        self.fc1 = torch.nn.Linear(in_features, hidden_features)
+        self.act = torch.nn.GELU()
+        self.fc2 = torch.nn.Linear(hidden_features, out_features)
+        self.drop = torch.nn.Dropout(drop)
+
+    def forward(self, x):
+        x=self.fc1(x)
+        x=self.act(x)
+        x=self.drop(x)
+        x=self.fc2(x)
+        x=self.drop(x)
+        return x
