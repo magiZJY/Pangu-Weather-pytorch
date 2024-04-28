@@ -45,7 +45,7 @@ from Your_AI_Library import LinearSpace, MeshGrid, Stack, Flatten, TensorSum, Te
 # Common functions for training models
 # LoadModel and SaveModel: Load and save the model, some APIs may require further adaptation to hardwares
 # Backward: Gradient backward to calculate the gratitude of each parameters
-# UpdateModelParametersWithAdam: Use Adam to update parameters, e.g., torch.optim.Adam
+# UpdateModelParametersWithAdam: Use Adam to update parameters, e.g., torch.optim.Adam 
 from Your_AI_Library import LoadModel, Backward, UpdateModelParametersWithAdam, SaveModel
 
 # Custom functions to read your data from the disc
@@ -167,13 +167,19 @@ def Train():
       # Call the model and get the output
       output, output_surface = model(input, input_surface)
 
+      optimizer.zero_grad()
+
       # We use the MAE loss to train the model
       # The weight of surface loss is 0.25
       # Different weight can be applied for differen fields if needed
-      loss = TensorAbs(output-target) + TensorAbs(output_surface-target_surface) * 0.25
+
+      # loss = TensorAbs(output-target) + TensorAbs(output_surface-target_surface) * 0.25
+      loss = torch.mean(torch.abs(outputs - targets)) + 0.25 * torch.mean(torch.abs(outputs_surface - targets_surface))
 
       # Call the backward algorithm and calculate the gratitude of parameters
-      Backward(loss)
+      # Backward(loss)
+      loss.backward()
+      optimizer.step()
 
       # Update model parameters with Adam optimizer
       # The learning rate is 5e-4 as in the paper, while the weight decay is 3e-6
@@ -194,7 +200,7 @@ class PanguModel:
     # Four basic layers
     self.layer1 = EarthSpecificLayer(2, 192, drop_list[:2], 6)
     self.layer2 = EarthSpecificLayer(6, 384, drop_list[6:], 12)
-    self.layer3 = EarthSpecificLayer(6, 384, drop_list[6:], 12)
+    self.layer3 = EarthSpecificLayer(6,a 384, drop_list[6:], 12)
     self.layer4 = EarthSpecificLayer(2, 192, drop_list[:2], 6)
 
     # Upsample and downsample
