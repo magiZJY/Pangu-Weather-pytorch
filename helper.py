@@ -3,42 +3,52 @@ import torch.nn as nn
 
 import torch.nn.functional as F
 
-def Pad3D(x, padding):
+def Pad2D(data, patch_size=(4, 4)):
     """
-    Apply 3D padding to a 5D tensor.
-
-    Parameters:
-    - x: A 5D tensor of shape [batch_size, channels, depth, height, width].
-    - padding: A tuple of 6 integers (padLeft, padRight, padTop, padBottom, padFront, padBack)
-               specifying the amount of padding to add.
-
-    Returns:
-    - A 5D tensor with padding applied.
+    Pad 2D surface input
     """
-    return F.pad(x, padding, mode='constant', value=0)
+    _, latitude, _  = data.shape
+
+    latitude_padding = (4 - latitude % 4) % 4
+    padded_data = F.pad(data, (0, 0, 0, latitude_padding), mode='constant', value=0)
 
 
-def Pad2D(x, padding):
+    return padded_data
+
+
+
+
+def Pad3D(data, patch=(2,4,4)):
     """
-    Apply 2D padding to a 4D tensor.
-
-    Parameters:
-    - x: A 4D tensor of shape [batch_size, channels, height, width].
-    - padding: A tuple of 4 integers (padLeft, padRight, padTop, padBottom)
-               specifying the amount of padding to add.
-
-    Returns:
-    - A 4D tensor with padding applied.
+    Pad upper air var.
     """
-    return F.pad(x, padding, mode='constant', value=0)
+    try: # padding for patch emb
+      height, longitude, latitude, _ = data.shape # pad height(13) and lat(721)
+      # patch = (2,4,4)
 
-# Example usage
-x = torch.randn(1, 1, 10, 10)  # Example tensor
-padding = (1, 1, 1, 1)  # Add a padding of 1 unit around each side in the height and width dimensions
+    except: # padding for earth spec block
+      _, height, longitude, latitude, _ = data.shape
+      # patch = (2, 6, 12) # window patch
+
+    height_patch = patch[0]
+    longitude_patch = patch[1]
+    latitude_patch = patch[2] # 181 pad 12
+
+
+    height_padding = (height_patch - height % height_patch) % height_patch
+    latitude_padding = (latitude_patch - latitude % latitude_patch) % latitude_patch
+    print("latitude_padding", latitude_padding)
+    # Apply padding
+    padded_data = F.pad(data, (0, 0, 0, latitude_padding, 0, 0, 0, height_padding), mode='constant', value=0)
+
+    return padded_data
+
+
 
 def gen_mask(x):
 
     return
 
-def no_mask(x):
+def no_mask():
+  
     return
